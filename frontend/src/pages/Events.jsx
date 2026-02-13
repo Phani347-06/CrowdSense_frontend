@@ -191,6 +191,14 @@ const Events = () => {
     };
 
     const handleUpdateStatus = async (email, eventName, status) => {
+        // Optimistic Update: Immediately update UI
+        const previousRegistrations = [...registrations];
+        setRegistrations(prev => prev.map(r =>
+            (r.user_email === email && r.event_name === eventName)
+                ? { ...r, status: status }
+                : r
+        ));
+
         try {
             const res = await fetch('http://127.0.0.1:5000/api/events/update-status', {
                 method: 'POST',
@@ -198,10 +206,22 @@ const Events = () => {
                 body: JSON.stringify({ email, event_name: eventName, status })
             });
             if (res.ok) {
-                setMsg({ type: 'success', text: `Registration ${status.toLowerCase()}!` });
-                // Re-fetch handled by effect interval
+                setMsg({ type: 'success', text: `Registration ${status.toLowerCase()} successfully!` });
+                setTimeout(() => setMsg({ type: '', text: '' }), 3000);
+            } else {
+                // Revert on failure
+                setRegistrations(previousRegistrations);
+                const errData = await res.json();
+                setMsg({ type: 'error', text: errData.error || 'Update failed — reverted.' });
+                setTimeout(() => setMsg({ type: '', text: '' }), 3000);
             }
-        } catch (e) { console.error("Status update error", e); }
+        } catch (e) {
+            // Revert on network error
+            setRegistrations(previousRegistrations);
+            console.error("Status update error", e);
+            setMsg({ type: 'error', text: 'Network error. Changes reverted.' });
+            setTimeout(() => setMsg({ type: '', text: '' }), 3000);
+        }
     };
 
     const handleUpdateCapacity = async (zone_id, newCap) => {
@@ -428,7 +448,7 @@ const Events = () => {
                                         <p className="text-center text-gray-400 py-10 text-sm italic">No registrations yet</p>
                                     ) : (
                                         myEvents.map((r, i) => (
-                                            <div key={i} className="p-4 rounded-2xl border border-gray-50 dark:border-slate-700/50 bg-gray-50/50 dark:bg-slate-900/30">
+                                            <div key={i} className={`p-4 rounded-2xl border ${r.status === 'REJECTED' ? 'border-red-200 dark:border-red-900/30 bg-red-50/30 dark:bg-red-900/10' : r.status === 'PENDING' ? 'border-amber-200 dark:border-amber-900/30 bg-amber-50/30 dark:bg-amber-900/10' : 'border-green-200 dark:border-green-900/30 bg-green-50/30 dark:bg-green-900/10'}`}>
                                                 <div className="flex justify-between items-start mb-1">
                                                     <span className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest">{r.event_name}</span>
                                                     <span className="text-[10px] text-gray-400 font-mono">{new Date(r.timestamp).toLocaleDateString()}</span>
@@ -436,12 +456,16 @@ const Events = () => {
                                                 <p className="text-sm font-black text-gray-800 dark:text-gray-100">Zone: {regions.find(reg => reg.id === r.zone_id)?.name || r.zone_id}</p>
                                                 <div className="flex items-center justify-between mt-2">
                                                     <p className="text-[10px] text-gray-500">Alerts to: <span className="font-bold text-gray-700 dark:text-gray-300">{r.contact_email}</span></p>
-                                                    {r.status === 'APPROVED' && (
-                                                        <span className="flex items-center gap-1 text-[9px] font-black text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-0.5 rounded-full">
-                                                            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
-                                                            ACTIVE
-                                                        </span>
-                                                    )}
+                                                    <span className={`flex items-center gap-1 text-[9px] font-black px-2 py-0.5 rounded-full ${r.status === 'APPROVED' ? 'text-green-600 bg-green-100 dark:bg-green-900/20' :
+                                                        r.status === 'REJECTED' ? 'text-red-600 bg-red-100 dark:bg-red-900/20' :
+                                                            'text-amber-600 bg-amber-100 dark:bg-amber-900/20'
+                                                        }`}>
+                                                        <div className={`w-1.5 h-1.5 rounded-full ${r.status === 'APPROVED' ? 'bg-green-500 animate-pulse' :
+                                                            r.status === 'REJECTED' ? 'bg-red-500' :
+                                                                'bg-amber-500 animate-pulse'
+                                                            }`}></div>
+                                                        {r.status === 'APPROVED' ? 'APPROVED' : r.status === 'REJECTED' ? 'REJECTED' : 'AWAITING APPROVAL'}
+                                                    </span>
                                                 </div>
                                             </div>
                                         ))
