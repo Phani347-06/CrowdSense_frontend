@@ -5,6 +5,10 @@ import Header from './components/Header';
 
 const Layout = () => {
     const [theme, setTheme] = useState('light');
+    const [searchQuery, setSearchQuery] = useState('');
+    useEffect(() => {
+        console.log("Layout Search State:", searchQuery);
+    }, [searchQuery]);
 
     const toggleTheme = () => {
         const newTheme = theme === 'light' ? 'dark' : 'light';
@@ -29,9 +33,9 @@ const Layout = () => {
         <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 transition-colors duration-300">
             <Sidebar theme={theme} toggleTheme={toggleTheme} />
             <div className="flex flex-col flex-1 overflow-hidden relative">
-                <Header title="CrowdSense Overview" />
+                <Header searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
                 <main className="flex-1 overflow-y-auto p-8 relative scroll-smooth">
-                    <Outlet />
+                    <Outlet context={{ searchQuery, setSearchQuery }} />
                 </main>
             </div>
         </div>

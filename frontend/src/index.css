@@ -13,12 +13,6 @@
     @apply w-full h-full relative cursor-grab bg-[length:20px_20px];
     background-image: radial-gradient(theme('colors.slate.300') 1px, transparent 1px);
     display: flex;
-    /* THIS MIGHT BE THE ISSUE - REMOVE IT OR CHANGE IT IF NOT INTENDED */
-    /* If markers are absolutely positioned based on percentages, flex shouldn't matter UNLESS 'align-items' stretches container? */
-    /* Let's remove flex from map-visual to fix the "clumped in middle" issue if it was centering the content box? */
-    /* No, wait. If markers are 'absolute' inside 'relative', flex on parent doesn't apply to them unless 'static'. */
-    /* However, if 'map-visual' itself had 0 height, that would be the issue. Flex causes items to stretch? */
-    /* Let's keep flex for centering the '300x300' label but ensure width/height are 100%. */
     align-items: center;
     justify-content: center;
 }
@@ -71,4 +65,35 @@
 
 ::-webkit-scrollbar-thumb {
     @apply bg-gray-300 rounded-full hover:bg-gray-400 dark:bg-slate-700 dark:hover:bg-slate-600;
+}
+
+@keyframes flow-dash {
+    from {
+        stroke-dashoffset: 30;
+    }
+
+    to {
+        stroke-dashoffset: 0;
+    }
+}
+
+.animate-flow-dash {
+    animation: flow-dash 1s linear infinite;
+}
+
+@keyframes gradient-xy {
+
+    0%,
+    100% {
+        background-position: 0% 50%;
+    }
+
+    50% {
+        background-position: 100% 50%;
+    }
+}
+
+.animate-gradient-xy {
+    background-size: 200% 200%;
+    animation: gradient-xy 15s ease infinite;
 }

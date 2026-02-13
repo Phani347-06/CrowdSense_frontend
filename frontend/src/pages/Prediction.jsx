@@ -29,6 +29,7 @@ ChartJS.register(
 const Prediction = () => {
     const [liveData, setLiveData] = useState(null);
     const [alerts, setAlerts] = useState([]);
+    const [flowData, setFlowData] = useState([]);
 
     // Fetch live data from backend
     useEffect(() => {
@@ -39,8 +40,12 @@ const Prediction = () => {
                     fetch('http://127.0.0.1:5000/api/alerts')
                 ]);
                 if (liveRes.ok) {
-                    const data = await liveRes.json();
+                    const result = await liveRes.json();
+                    // Handle unified structure { zones, flows }
+                    const data = result.zones || result;
+                    const flows = result.flows || [];
                     setLiveData(data);
+                    setFlowData(flows);
                 }
                 if (alertRes.ok) {
                     const alertData = await alertRes.json();
@@ -79,18 +84,15 @@ const Prediction = () => {
         { id: 'dblock', name: 'Academic Block D', x: '45.8%', y: '73.6%', capacity: 400, current: 50, status: 'Low Activity', color: 'bg-green-500' }
     ];
 
-    // Build flow data from backend
-    const flowData = liveData ? Object.values(liveData).flatMap(z =>
-        (z.flows || []).map(f => ({
-            from: f.from_zone,
-            to: f.to_zone,
-            intensity: f.count > 30 ? 'high' : f.count > 10 ? 'medium' : 'low'
-        }))
-    ) : [];
-
     const getRegionCoords = (id) => {
-        const region = regionsData.find(r => r.id === id);
-        return region ? { x: region.x, y: region.y } : { x: '0%', y: '0%' };
+        const coords = {
+            'canteen': { x: '43.1%', y: '50.9%' },
+            'lib': { x: '41.6%', y: '58.0%' },
+            'pg': { x: '39.8%', y: '70.8%' },
+            'newblock': { x: '48.1%', y: '57.6%' },
+            'dblock': { x: '44.8%', y: '73.6%' }
+        };
+        return coords[id] || { x: '0%', y: '0%' };
     };
 
     // Fetch trend data for charts
@@ -334,38 +336,47 @@ const Prediction = () => {
                         ))}
                     </div>
 
-                    {/* Flow Arrows Overlay */}
-                    <svg className="absolute inset-0 w-full h-full pointer-events-none z-10 filter drop-shadow-sm">
+                    {/* Smart Crowd Flow Overlay */}
+                    <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
                         <defs>
-                            <marker id="arrowhead-high" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
-                                <polygon points="0 0, 6 2, 0 4" fill="#ef4444" />
+                            <marker id="arrowhead-flow" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                                <polygon points="0 0, 6 2, 0 4" fill="#3b82f6" />
                             </marker>
-                            <marker id="arrowhead-medium" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
-                                <polygon points="0 0, 6 2, 0 4" fill="#f59e0b" />
-                            </marker>
-                            <marker id="arrowhead-low" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
-                                <polygon points="0 0, 6 2, 0 4" fill="#22c55e" />
-                            </marker>
+                            <linearGradient id="flow-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                <stop offset="0%" stopColor="#60a5fa" stopOpacity="0" />
+                                <stop offset="50%" stopColor="#3b82f6" stopOpacity="1" />
+                                <stop offset="100%" stopColor="#2563eb" stopOpacity="0" />
+                            </linearGradient>
                         </defs>
                         {flowData.map((flow, i) => {
                             const start = getRegionCoords(flow.from);
                             const end = getRegionCoords(flow.to);
-                            let color = '#22c55e';
-                            let marker = 'url(#arrowhead-low)';
-                            if (flow.intensity === 'high') { color = '#ef4444'; marker = 'url(#arrowhead-high)'; }
-                            else if (flow.intensity === 'medium') { color = '#f59e0b'; marker = 'url(#arrowhead-medium)'; }
+                            if (start.x === '0%' || end.x === '0%') return null;
 
                             return (
-                                <line
-                                    key={i}
-                                    x1={start.x} y1={start.y}
-                                    x2={end.x} y2={end.y}
-                                    stroke={color}
-                                    strokeWidth={flow.intensity === 'high' ? 2 : 1.5}
-                                    strokeDasharray="4,3"
-                                    markerEnd={marker}
-                                    className="opacity-80"
-                                />
+                                <g key={i}>
+                                    <path
+                                        d={`M ${start.x} ${start.y} L ${end.x} ${end.y}`}
+                                        stroke="#3b82f6"
+                                        strokeWidth="1"
+                                        style={{ opacity: 0.1 }}
+                                    />
+                                    {[0, 1, 2].map(seg => (
+                                        <path
+                                            key={seg}
+                                            d={`M ${start.x} ${start.y} L ${end.x} ${end.y}`}
+                                            stroke="url(#flow-gradient)"
+                                            strokeWidth={1.5 + (flow.intensity * 4)}
+                                            strokeDasharray="4, 16"
+                                            markerEnd="url(#arrowhead-flow)"
+                                            style={{
+                                                opacity: flow.intensity * 0.9,
+                                                animationDelay: `${seg * 0.3}s`
+                                            }}
+                                            className="animate-flow-dash"
+                                        />
+                                    ))}
+                                </g>
                             );
                         })}
                     </svg>

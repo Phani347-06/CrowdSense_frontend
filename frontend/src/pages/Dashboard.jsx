@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import { TrendingUp, Users, Wifi, MapPin, Plus, Minus, RotateCw, FileText, Settings, User, Brain, Shield } from 'lucide-react';
@@ -63,7 +64,14 @@ const Dashboard = () => {
     const [regions, setRegions] = useState(regionsData);
     const [flowData, setFlowData] = useState([]);
     const [zoomLevel, setZoomLevel] = useState(1);
+    const [showFlow, setShowFlow] = useState(true);
+    const [timeTravelValue, setTimeTravelValue] = useState(new Date().getHours());
+    const [isTimeTravelActive, setIsTimeTravelActive] = useState(false);
+    const { searchQuery, setSearchQuery } = useOutletContext();
+    const [isSearchView, setIsSearchView] = useState(false);
+    const [isSearching, setIsSearching] = useState(false);
     const [selectedRegion, setSelectedRegion] = useState(regionsData[0]);
+    const [localTrend, setLocalTrend] = useState([]);
     const [chartDataVisible, setChartDataVisible] = useState([true, true]);
     const [summary, setSummary] = useState({
         total_devices: 0,
@@ -90,28 +98,24 @@ const Dashboard = () => {
     useEffect(() => {
         const fetchLiveData = async () => {
             try {
+                const url = isTimeTravelActive
+                    ? `http://127.0.0.1:5000/api/forecast?hour=${timeTravelValue}&minute=0`
+                    : 'http://127.0.0.1:5000/api/live';
+
                 const [liveRes, summaryRes] = await Promise.all([
-                    fetch('http://127.0.0.1:5000/api/live'),
+                    fetch(url),
                     fetch('http://127.0.0.1:5000/api/summary')
                 ]);
 
                 if (liveRes.ok) {
-                    const data = await liveRes.json();
-                    if (data && Object.keys(data).length > 0) {
-                        const newFlows = [];
+                    const result = await liveRes.json();
+                    const data = result.zones || result;
+                    const flows = result.flows || [];
 
+                    if (data && Object.keys(data).length > 0) {
                         setRegions(prevRegions => prevRegions.map(region => {
                             const incoming = data[region.id];
                             if (incoming) {
-                                if (incoming.flows && incoming.flows.length > 0) {
-                                    incoming.flows.forEach(f => {
-                                        newFlows.push({
-                                            from: f.from_zone,
-                                            to: f.to_zone,
-                                            intensity: f.count > 20 ? 'high' : 'medium'
-                                        });
-                                    });
-                                }
                                 return {
                                     ...region,
                                     current: incoming.current,
@@ -126,11 +130,16 @@ const Dashboard = () => {
                             }
                             return region;
                         }));
-                        setFlowData(newFlows);
+                        setFlowData(flows);
+
+                        // If forecast mode provides a summary, use it
+                        if (isTimeTravelActive && result.summary) {
+                            setSummary(result.summary);
+                        }
                     }
                 }
 
-                if (summaryRes.ok) {
+                if (!isTimeTravelActive && summaryRes.ok) {
                     const sumData = await summaryRes.json();
                     setSummary(sumData);
                 }
@@ -140,9 +149,78 @@ const Dashboard = () => {
         };
 
         fetchLiveData();
-        const interval = setInterval(fetchLiveData, 2000);
+        // Faster polling when time traveling for snapiness
+        const interval = setInterval(fetchLiveData, isTimeTravelActive ? 500 : 2000);
         return () => clearInterval(interval);
-    }, []);
+    }, [isTimeTravelActive, timeTravelValue]);
+
+    const [peakInfo, setPeakInfo] = useState({ hour: 0, delta: 0 });
+
+    // Search Logic: Highly Optimized Batch Fetching
+    useEffect(() => {
+        const triggerSearch = async () => {
+            if (searchQuery.trim().length > 0) {
+                const query = searchQuery.toLowerCase().trim();
+                const match = regions.find(r =>
+                    r.name.toLowerCase().includes(query) ||
+                    r.id.toLowerCase().includes(query)
+                );
+
+                if (match) {
+                    console.log("Dashboard: Match found, entering Focus View", match.name);
+                    setSelectedRegion(match);
+                    setIsSearchView(true);
+                    setIsSearching(true);
+                    setLocalTrend([]); // Clear stale data
+                    setSearchQuery(''); // Clear search query to prevent trigger loop
+
+                    try {
+                        // Optimized: One batch call for all 24 hours
+                        const res = await fetch(`http://127.0.0.1:5000/api/forecast/24h/${match.id}`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            setLocalTrend(data);
+
+                            // Calculate Peak Hour dynamically within operational window (08:00 - 18:00)
+                            const operationalData = data.filter(t => t.hour >= 8 && t.hour <= 18);
+                            const peak = (operationalData.length > 0 ? operationalData : data).reduce(
+                                (max, curr) => curr.predicted > max.predicted ? curr : max,
+                                data[0]
+                            );
+
+                            const currentHour = new Date().getHours();
+                            const peakHour = parseInt(peak.hour);
+                            const deltaRaw = peakHour - currentHour;
+                            const delta = deltaRaw < 0 ? 24 + deltaRaw : deltaRaw;
+                            setPeakInfo({ hour: peakHour, delta: delta });
+                        }
+                    } catch (e) {
+                        console.error("Batch forecast failed", e);
+                    } finally {
+                        setIsSearching(false);
+                    }
+                }
+            }
+        };
+        triggerSearch();
+    }, [searchQuery, regions, setSearchQuery]);
+
+
+
+    // Fetch Live History for Selected Region (Incremental updates)
+    useEffect(() => {
+        const fetchCurrentTrend = async () => {
+            if (isSearchView) return; // Full day view handles its own data
+            try {
+                const res = await fetch(`http://127.0.0.1:5000/api/trend/${selectedRegion.id}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    setLocalTrend(data);
+                }
+            } catch (e) { console.error("Zone trend fetch error", e); }
+        };
+        fetchCurrentTrend();
+    }, [selectedRegion.id, isSearchView]);
 
     // Sync selected region when data updates
     useEffect(() => {
@@ -248,25 +326,204 @@ const Dashboard = () => {
 
     const handleMouseUp = () => setIsDragging(false);
 
+    if (isSearchView) {
+        const currentLoad = Math.round((selectedRegion.current / selectedRegion.capacity) * 100);
+
+        // Filter trend data to 8 AM - 6 PM for the graph, handle both numbers and strings
+        const filteredTrend = localTrend.filter(t => {
+            const h = typeof t.hour === 'string' ? parseInt(t.hour.split(':')[0]) : t.hour;
+            return h >= 8 && h <= 18;
+        });
+
+        // Create a unique key for the chart to force a fresh render when the region or data changes
+        const chartKey = `chart-${selectedRegion.id}-${filteredTrend.length}`;
+
+        const predictionLineData = {
+            labels: filteredTrend.length > 0 ? filteredTrend.map(t => {
+                const h = typeof t.hour === 'string' ? parseInt(t.hour.split(':')[0]) : t.hour;
+                return `${h}:00`;
+            }) : ["08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00"],
+            datasets: [{
+                label: 'Predicted People',
+                data: filteredTrend.length > 0 ? filteredTrend.map(t => t.predicted) : [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                borderColor: '#22c55e',
+                backgroundColor: 'rgba(34, 197, 94, 0.15)',
+                borderWidth: 4,
+                tension: 0.4,
+                pointRadius: 6,
+                fill: true,
+                pointHoverRadius: 8,
+                pointHoverBackgroundColor: '#22c55e',
+                pointHoverBorderColor: '#09090b',
+                pointBackgroundColor: '#22c55e',
+                pointBorderColor: '#09090b',
+                pointBorderWidth: 2
+            }]
+        };
+
+
+
+        const predictionOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: '#1c1c1e',
+                    titleFont: { size: 14, weight: 'bold' },
+                    bodyFont: { size: 13 },
+                    padding: 12,
+                    displayColors: false,
+                    callbacks: {
+                        label: (ctx) => `Predicted: ${ctx.raw} people`
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    ticks: {
+                        color: '#64748b',
+                        font: { size: 12, weight: '600' },
+                        maxRotation: 0,
+                        autoSkip: false
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    suggestedMax: selectedRegion.capacity,
+                    grid: { color: 'rgba(255,255,255,0.03)', drawBorder: false },
+                    ticks: {
+                        color: '#64748b',
+                        font: { size: 12 },
+                        callback: (v) => v + ' ppl',
+                        stepSize: Math.ceil(selectedRegion.capacity / 5)
+                    }
+                }
+            }
+        };
+
+
+
+        return (
+            <div className="fixed inset-0 z-[100] bg-[#09090b] p-10 flex flex-col animate-in fade-in zoom-in duration-500 overflow-hidden">
+                <div className="flex justify-between items-center max-w-7xl mx-auto w-full mb-10">
+                    <button
+                        onClick={() => { setIsSearchView(false); setSearchQuery(''); }}
+                        className="group flex items-center gap-3 px-6 py-3 bg-white/5 hover:bg-white/10 text-white rounded-2xl font-black transition-all border border-white/10"
+                    >
+                        <RotateCw size={20} className="group-hover:rotate-180 transition-transform duration-500" />
+                        <span className="tracking-widest text-xs">BACK TO DASHBOARD</span>
+                    </button>
+                    <div className="text-right">
+                        <h2 className="text-4xl font-black text-white tracking-tighter">{selectedRegion.name}</h2>
+                        <div className="flex items-center justify-end gap-2 mt-1">
+                            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                            <p className="text-slate-400 text-sm font-bold uppercase tracking-widest">Full Day Crowd Prediction</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="flex-1 flex flex-col items-center justify-center max-w-6xl mx-auto w-full">
+                    <div className="bg-[#1c1c1e] rounded-[60px] p-16 shadow-2xl border border-white/5 w-full relative overflow-hidden ring-1 ring-white/10">
+                        {/* Background subtle glow */}
+                        <div className="absolute top-0 right-0 w-96 h-96 bg-green-500/5 blur-[120px] rounded-full -mr-20 -mt-20"></div>
+
+                        <div className="flex justify-between items-start mb-12 relative z-10">
+                            <div>
+                                <div className="text-sm font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Current Saturation</div>
+                                <div className="text-[160px] font-medium text-white leading-none tracking-tighter flex items-end">
+                                    {currentLoad}<span className="text-7xl text-white/30 ml-2 mb-6">%</span>
+                                </div>
+                            </div>
+                            <div className="bg-green-500/10 border border-green-500/20 rounded-2xl px-6 py-4 flex items-center gap-3 text-green-500 font-black tracking-wider shadow-lg shadow-green-500/5 mt-8">
+                                <div className="relative">
+                                    <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                                    <div className="absolute inset-0 w-3 h-3 rounded-full bg-green-500 animate-ping"></div>
+                                </div>
+                                <span className="text-lg">
+                                    {isSearching ? 'Calculating...' : peakInfo.delta === 0 ? 'Peaking now' : `Should peak in ${peakInfo.delta} h`}
+                                </span>
+                            </div>
+                        </div>
+
+                        <div className="h-[280px] relative mt-4">
+                            <Line key={chartKey} data={predictionLineData} options={predictionOptions} />
+                        </div>
+
+
+                        {/* Forecast Timeline (Operational Hours 8AM - 6PM) */}
+                        <div className="mt-12">
+                            <div className="flex justify-between items-center mb-4">
+                                <div className="text-slate-500 text-[10px] uppercase font-black tracking-[0.2em]">Operational Window (08:00 - 18:00)</div>
+                                <div className="text-blue-500 text-[10px] font-black uppercase tracking-widest bg-blue-500/10 px-2 py-1 rounded">Peak Analytics</div>
+                            </div>
+                            <div className="flex gap-4 overflow-x-auto pb-4 custom-scrollbar">
+                                {localTrend.filter(t => {
+                                    const h = typeof t.hour === 'string' ? parseInt(t.hour.split(':')[0]) : t.hour;
+                                    return h >= 8 && h <= 18;
+                                }).map((t, i) => {
+                                    const currentHour = new Date().getHours();
+                                    const h = typeof t.hour === 'string' ? parseInt(t.hour.split(':')[0]) : t.hour;
+                                    return (
+                                        <div key={i} className={`min-w-[110px] bg-white/5 border ${h === currentHour ? 'border-blue-500/50 bg-blue-500/5' : 'border-white/5'} rounded-2xl p-4 flex flex-col items-center transition-all hover:bg-white/10`}>
+                                            <div className="text-[10px] font-black text-slate-500 mb-2">{h}:00</div>
+                                            <div className={`text-2xl font-bold ${t.load > 70 ? 'text-red-500' : t.load > 40 ? 'text-amber-500' : 'text-white'} mb-1`}>{t.load}%</div>
+                                            <div className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">{t.predicted} ppl</div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+
+                        <div className="grid grid-cols-4 gap-12 mt-12 pt-10 border-t border-white/5 relative z-10">
+                            <div>
+                                <div className="text-slate-500 text-xs uppercase font-black tracking-widest mb-3">Estimated Now</div>
+                                <div className="text-white text-3xl font-bold font-mono">{selectedRegion.current}<span className="text-sm text-slate-500 ml-2">ppl</span></div>
+                            </div>
+                            <div>
+                                <div className="text-slate-500 text-xs uppercase font-black tracking-widest mb-3">Today's Peak</div>
+                                <div className="text-white text-3xl font-bold font-mono">{peakInfo.hour}:00</div>
+                            </div>
+                            <div>
+                                <div className="text-slate-500 text-xs uppercase font-black tracking-widest mb-3">AI Confidence</div>
+                                <div className="text-white text-3xl font-bold font-mono">98.2<span className="text-sm text-slate-500 ml-1">%</span></div>
+                            </div>
+                            <div>
+                                <div className="text-slate-500 text-xs uppercase font-black tracking-widest mb-3">Live Risk</div>
+                                <div className="text-green-500 text-3xl font-bold tracking-tighter">LOW</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="space-y-6">
+            <div className="mb-8">
+                <h2 className="text-3xl font-black text-gray-900 dark:text-white tracking-tight">Campus Overview</h2>
+                <p className="text-gray-500 dark:text-gray-400">Real-time crowd analytics and ML predictions.</p>
+            </div>
             {/* Top Stats */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 relative">
                 <StatCard
-                    icon={Wifi} color="blue" title="Total Devices" value={summary.total_people ? summary.total_people.toLocaleString() : '—'} trend={summary.total_people > 0 ? 'Live' : null} isPositive={true}
+                    icon={Wifi} color="blue" title={isTimeTravelActive ? "Predicted Devices" : "Total Devices"} value={summary.total_people ? summary.total_people.toLocaleString() : '—'} trend={isTimeTravelActive ? 'Forecast' : (summary.total_people > 0 ? 'Live' : null)} isPositive={true}
                     details={[{ label: 'Avg Signal', value: '-65 dBm' }, { label: 'Zones', value: regions.length }]}
                 />
                 <StatCard
-                    icon={Users} color="purple" title="Est. People" value={summary.total_devices ? summary.total_devices.toLocaleString() : '—'} trend={summary.total_devices > 0 ? '+12%' : null} isPositive={true}
+                    icon={Users} color="purple" title={isTimeTravelActive ? "Predicted People" : "Est. People"} value={summary.total_devices ? summary.total_devices.toLocaleString() : '—'} trend={isTimeTravelActive ? 'Simulated' : (summary.total_devices > 0 ? '+12%' : null)} isPositive={true}
                     details={[{ label: 'Avg Dwell', value: '42 min' }, { label: 'Peak Zone', value: summary.peak_zone || '—' }]}
                 />
                 <StatCard
-                    icon={Brain} color="green" title="AI Projected Demand" value={summary.total_predicted ? summary.total_predicted.toLocaleString() : '—'} statusText="Predictive" statusColor="text-blue-500"
+                    icon={Brain} color="green" title="AI Projected Demand" value={summary.total_predicted ? summary.total_predicted.toLocaleString() : '—'} statusText={isTimeTravelActive ? "Forecast Mode" : "Predictive"} statusColor="text-blue-500"
                     details={[{ label: 'Accuracy', value: '96.2%' }, { label: 'Model', value: 'XGBoost v2' }]}
                 />
                 <StatCard
-                    icon={Shield} color="orange" title="Campus Risk Index" value={summary.avg_cri || '—'} statusText={summary.max_cri >= 70 ? 'High Risk' : summary.max_cri >= 50 ? 'Moderate' : 'Stable'} statusColor={summary.max_cri >= 70 ? 'text-red-500' : summary.max_cri >= 50 ? 'text-amber-500' : 'text-green-500'}
-                    details={[{ label: 'Alerts', value: summary.alert_count || 0 }, { label: 'Critical', value: summary.zones_critical || 0 }]}
+                    icon={Shield} color="orange" title={isTimeTravelActive ? "Forecast Risk Index" : "Campus Risk Index"} value={summary.avg_cri || '—'} statusText={isTimeTravelActive ? "Projected" : (summary.max_cri >= 70 ? 'High Risk' : summary.max_cri >= 50 ? 'Moderate' : 'Stable')} statusColor={summary.max_cri >= 70 ? 'text-red-500' : summary.max_cri >= 50 ? 'text-amber-500' : 'text-green-500'}
+                    details={[{ label: 'Alerts', value: isTimeTravelActive ? 0 : (summary.alert_count || 0) }, { label: 'Critical', value: summary.zones_critical || 0 }]}
                 />
             </div>
 
@@ -281,9 +538,44 @@ const Dashboard = () => {
                             </div>
                             <h3 className="font-bold text-gray-900 dark:text-white">Campus Density Map</h3>
                         </div>
-                        <div className="flex bg-gray-100 dark:bg-slate-700 rounded-lg p-1">
-                            <button className="p-1.5 hover:bg-white dark:hover:bg-slate-600 rounded-md text-gray-500 dark:text-gray-300 transition-colors shadow-sm" onClick={() => setZoomLevel(z => Math.min(4, z + 0.2))}><Plus size={16} /></button>
-                            <button className="p-1.5 hover:bg-white dark:hover:bg-slate-600 rounded-md text-gray-500 dark:text-gray-300 transition-colors shadow-sm" onClick={() => setZoomLevel(z => Math.max(0.5, z - 0.2))}><Minus size={16} /></button>
+                        <div className="flex items-center gap-4">
+                            {/* Time Travel Slider */}
+                            <div className="flex items-center gap-3 bg-gray-50 dark:bg-slate-700/50 px-4 py-2 rounded-xl border border-gray-100 dark:border-slate-600">
+                                <span className={`text-[10px] font-black uppercase tracking-widest ${isTimeTravelActive ? 'text-blue-500' : 'text-gray-400'}`}>
+                                    {isTimeTravelActive ? `Forecast: ${timeTravelValue}:00` : 'Time Projection'}
+                                </span>
+                                <input
+                                    type="range" min="0" max="23"
+                                    value={timeTravelValue}
+                                    onChange={(e) => {
+                                        setTimeTravelValue(parseInt(e.target.value));
+                                        setIsTimeTravelActive(true);
+                                    }}
+                                    className="w-32 h-1.5 bg-gray-200 dark:bg-slate-600 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                />
+                                {isTimeTravelActive && (
+                                    <button
+                                        onClick={() => setIsTimeTravelActive(false)}
+                                        className="text-[10px] bg-blue-500 text-white px-2 py-1 rounded font-black hover:bg-blue-600 transition-colors"
+                                    >
+                                        BACK TO LIVE
+                                    </button>
+                                )}
+                            </div>
+
+                            <label className="flex items-center gap-2 cursor-pointer bg-gray-50 dark:bg-slate-700/50 px-3 py-1.5 rounded-lg border border-gray-100 dark:border-slate-600 transition-all hover:bg-gray-100">
+                                <span className={`text-xs font-bold ${showFlow ? 'text-blue-500' : 'text-gray-400'}`}>Smart Flow</span>
+                                <div className="relative inline-block w-8 h-4">
+                                    <input type="checkbox" className="opacity-0 w-0 h-0" checked={showFlow} onChange={() => setShowFlow(!showFlow)} />
+                                    <span className={`absolute top-0 left-0 right-0 bottom-0 transition-all rounded-full ${showFlow ? 'bg-blue-500' : 'bg-gray-300'}`}>
+                                        <span className={`absolute left-1 top-0.5 bg-white w-3 h-3 rounded-full transition-transform ${showFlow ? 'translate-x-3' : ''}`}></span>
+                                    </span>
+                                </div>
+                            </label>
+                            <div className="flex bg-gray-100 dark:bg-slate-700 rounded-lg p-1">
+                                <button className="p-1.5 hover:bg-white dark:hover:bg-slate-600 rounded-md text-gray-500 dark:text-gray-300 transition-colors shadow-sm" onClick={() => setZoomLevel(z => Math.min(4, z + 0.2))}><Plus size={16} /></button>
+                                <button className="p-1.5 hover:bg-white dark:hover:bg-slate-600 rounded-md text-gray-500 dark:text-gray-300 transition-colors shadow-sm" onClick={() => setZoomLevel(z => Math.max(0.5, z - 0.2))}><Minus size={16} /></button>
+                            </div>
                         </div>
                     </div>
 
@@ -304,32 +596,63 @@ const Dashboard = () => {
                                 src="https://www.openstreetmap.org/export/embed.html?bbox=78.383911,17.535606,78.388299,17.541877&layer=mapnik"
                             ></iframe>
 
-                            {/* Flow Arrows Overlay */}
-                            <svg className="absolute inset-0 w-full h-full pointer-events-none z-0 filter drop-shadow-sm">
-                                <defs>
-                                    <marker id="arrowhead-flow" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
-                                        <polygon points="0 0, 6 2, 0 4" fill="#3b82f6" opacity="0.6" />
-                                    </marker>
-                                </defs>
-                                {flowData.map((flow, i) => {
-                                    const start = getRegionCoords(flow.from);
-                                    const end = getRegionCoords(flow.to);
-                                    if (start.x === '0%' || end.x === '0%') return null;
+                            {/* Smart Crowd Flow Overlay */}
+                            {showFlow && (
+                                <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
+                                    <defs>
+                                        <marker id="arrowhead-flow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                                            <path d="M0,0 L8,4 L0,8 Z" fill="#3b82f6" />
+                                        </marker>
+                                        <linearGradient id="flow-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                            <stop offset="0%" stopColor="#60a5fa" stopOpacity="0" />
+                                            <stop offset="50%" stopColor="#3b82f6" stopOpacity="1" />
+                                            <stop offset="100%" stopColor="#2563eb" stopOpacity="0" />
+                                        </linearGradient>
+                                    </defs>
+                                    {flowData.map((flow, i) => {
+                                        const start = getRegionCoords(flow.from);
+                                        const end = getRegionCoords(flow.to);
+                                        if (start.x === '0%' || end.x === '0%') return null;
 
-                                    return (
-                                        <line
-                                            key={i}
-                                            x1={start.x} y1={start.y}
-                                            x2={end.x} y2={end.y}
-                                            stroke="#3b82f6"
-                                            strokeWidth="2"
-                                            strokeDasharray="4,4"
-                                            markerEnd="url(#arrowhead-flow)"
-                                            className="opacity-50 animate-pulse"
-                                        />
-                                    );
-                                })}
-                            </svg>
+                                        // Calculate midpoint for an extra arrow indicator
+                                        const midX = (parseFloat(start.x) + parseFloat(end.x)) / 2 + '%';
+                                        const midY = (parseFloat(start.y) + parseFloat(end.y)) / 2 + '%';
+                                        const pathData = `M ${start.x} ${start.y} L ${midX} ${midY} L ${end.x} ${end.y}`;
+
+                                        return (
+                                            <g key={i}>
+                                                {/* Background track */}
+                                                <path
+                                                    d={pathData}
+                                                    stroke="#3b82f6"
+                                                    strokeWidth="1.5"
+                                                    fill="none"
+                                                    style={{ opacity: 0.15 }}
+                                                    markerEnd="url(#arrowhead-flow)"
+                                                />
+                                                {/* Moving Micro-Arrows (3-segment stream) */}
+                                                {[0, 1, 2].map(seg => (
+                                                    <path
+                                                        key={seg}
+                                                        d={pathData}
+                                                        stroke="url(#flow-gradient)"
+                                                        strokeWidth={1.5 + (flow.intensity * 4)}
+                                                        strokeDasharray="8, 20"
+                                                        fill="none"
+                                                        markerEnd="url(#arrowhead-flow)"
+                                                        markerMid="url(#arrowhead-flow)"
+                                                        style={{
+                                                            opacity: flow.intensity * 0.9,
+                                                            animationDelay: `${seg * 0.3}s`
+                                                        }}
+                                                        className="animate-flow-dash"
+                                                    />
+                                                ))}
+                                            </g>
+                                        );
+                                    })}
+                                </svg>
+                            )}
 
                             {regions.map(region => (
                                 <div key={region.id}
@@ -393,21 +716,22 @@ const Dashboard = () => {
                         </div>
 
                         <div className="flex-1 flex flex-col min-h-[120px]">
-                            <div className="text-xs font-bold text-gray-400 tracking-wider mb-2">LIVE TRENDS</div>
-                            <div className="flex-1 flex items-stretch justify-between gap-2 pt-2 h-full">
-                                {selectedRegion.trend.map((val, i) => (
-                                    <div key={i} className="flex flex-col justify-end items-center gap-1 w-full relative group h-full cursor-pointer">
-                                        {/* Tooltip */}
-                                        <div className="absolute bottom-[calc(100%+8px)] left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] font-bold px-2 py-1 rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-20 pointer-events-none">
-                                            {val}%
-                                            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 rotate-45"></div>
+                            <div className="text-xs font-bold text-blue-500 tracking-wider mb-2 uppercase">Daily Prediction Flow</div>
+                            <div className="flex-1 flex items-stretch justify-between gap-1 pt-2 h-full">
+                                {localTrend.length > 0 ? (
+                                    localTrend.slice(-24).map((val, i) => (
+                                        <div key={i} className="flex flex-col justify-end items-center gap-1 w-full relative group h-full cursor-pointer">
+                                            <div className="absolute bottom-[calc(100%+8px)] left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[8px] font-bold px-1.5 py-0.5 rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-20 pointer-events-none">
+                                                {val.hour}:00 - {val.predicted} ppl
+                                                <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-slate-800 rotate-45"></div>
+                                            </div>
+                                            <div className={`w-full rounded-t-[2px] transition-all duration-300 ${val.hour === new Date().getHours() ? 'bg-blue-600 shadow-[0_0_10px_rgba(59,130,246,0.5)]' : 'bg-blue-200 dark:bg-slate-700/50 group-hover:bg-blue-400'}`}
+                                                style={{ height: `${Math.min(100, (val.predicted / selectedRegion.capacity) * 100)}%` }}></div>
                                         </div>
-
-                                        <div className={`w-full rounded-t-sm transition-all duration-300 ${i === 6 ? 'bg-blue-500 dark:bg-blue-600' : (i > 6 ? 'bg-transparent border border-dashed border-slate-300 dark:border-slate-600' : 'bg-slate-200 dark:bg-slate-700 group-hover:bg-blue-400 dark:group-hover:bg-slate-600')}`}
-                                            style={{ height: `${val}%` }}></div>
-                                        {i === 6 && <div className="absolute -top-8 bg-blue-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow-sm z-10">Now</div>}
-                                    </div>
-                                ))}
+                                    ))
+                                ) : (
+                                    <div className="w-full flex items-center justify-center text-xs text-gray-400 italic">No prediction data available</div>
+                                )}
                             </div>
                         </div>
 
