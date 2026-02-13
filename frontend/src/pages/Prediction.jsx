@@ -92,34 +92,77 @@ const Prediction = () => {
         return region ? { x: region.x, y: region.y } : { x: '0%', y: '0%' };
     };
 
-    // Forecast Data
+    // Fetch trend data for charts
+    const [trendLabels, setTrendLabels] = useState([]);
+    const [trendActual, setTrendActual] = useState([]);
+    const [trendPredicted, setTrendPredicted] = useState([]);
+
+    useEffect(() => {
+        const fetchTrend = async () => {
+            try {
+                const res = await fetch('http://127.0.0.1:5000/api/trend');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.length > 0) {
+                        const step = Math.max(1, Math.floor(data.length / 24));
+                        const sampled = data.filter((_, i) => i % step === 0 || i === data.length - 1);
+                        setTrendLabels(sampled.map(d => d.hour));
+                        setTrendActual(sampled.map(d => d.total_actual));
+                        setTrendPredicted(sampled.map(d => d.total_predicted));
+                    }
+                }
+            } catch (e) { /* backend not ready */ }
+        };
+        fetchTrend();
+        const intv = setInterval(fetchTrend, 5000);
+        return () => clearInterval(intv);
+    }, []);
+
+    // Forecast Data — live from backend
     const forecastData = {
-        labels: ['00:00', '02:00', '04:00', '06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00'],
+        labels: trendLabels.length > 0 ? trendLabels : ['--'],
         datasets: [
             {
-                label: 'Predicted Crowd Density',
-                data: liveData ? [150, 100, 50, 200, 800, totalDevices * 0.9, totalDevices * 1.1, totalDevices, totalDevices * 0.85, totalDevices * 0.7, 600, 300] : [150, 100, 50, 200, 800, 1200, 1400, 1350, 1100, 900, 600, 300],
+                label: 'Actual Crowd Density',
+                data: trendActual.length > 0 ? trendActual : [0],
                 fill: true,
                 backgroundColor: (context) => {
                     const ctx = context.chart.ctx;
                     const gradient = ctx.createLinearGradient(0, 0, 0, 400);
-                    gradient.addColorStop(0, 'rgba(147, 51, 234, 0.5)');
+                    gradient.addColorStop(0, 'rgba(59, 130, 246, 0.5)');
+                    gradient.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
+                    return gradient;
+                },
+                borderColor: 'rgb(59, 130, 246)',
+                tension: 0.4,
+                pointRadius: 3,
+                pointBackgroundColor: 'rgb(59, 130, 246)',
+            },
+            {
+                label: 'ML Predicted Density',
+                data: trendPredicted.length > 0 ? trendPredicted : [0],
+                fill: true,
+                backgroundColor: (context) => {
+                    const ctx = context.chart.ctx;
+                    const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+                    gradient.addColorStop(0, 'rgba(147, 51, 234, 0.3)');
                     gradient.addColorStop(1, 'rgba(147, 51, 234, 0.0)');
                     return gradient;
                 },
                 borderColor: 'rgb(147, 51, 234)',
+                borderDash: [5, 5],
                 tension: 0.4,
-                pointRadius: 4,
-                pointBackgroundColor: 'rgb(147, 51, 234)',
+                pointRadius: 0,
             },
             {
-                label: 'Projected Capacity Limit',
-                data: [1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500],
-                borderColor: 'rgba(239, 68, 68, 0.8)',
-                borderDash: [5, 5],
+                label: 'Capacity Limit',
+                data: trendLabels.length > 0 ? trendLabels.map(() => 1550) : [1550],
+                borderColor: 'rgba(239, 68, 68, 0.6)',
+                borderDash: [8, 4],
                 tension: 0,
                 pointRadius: 0,
-                fill: false
+                fill: false,
+                borderWidth: 1.5
             }
         ]
     };
@@ -127,39 +170,45 @@ const Prediction = () => {
     const forecastOptions = {
         responsive: true,
         plugins: {
-            legend: { position: 'top', labels: { color: '#9ca3af' } },
+            legend: { position: 'top', labels: { color: '#9ca3af', usePointStyle: true } },
             title: { display: false }
         },
         scales: {
             y: { beginAtZero: true, grid: { color: 'rgba(200, 200, 200, 0.1)' }, ticks: { color: '#9ca3af' } },
-            x: { grid: { display: false }, ticks: { color: '#9ca3af' } }
+            x: { grid: { display: false }, ticks: { color: '#9ca3af', maxTicksLimit: 12 } }
         }
     };
 
-    // Comparison Data
+    // Comparison Data — per-zone actual vs predicted (live)
+    const zoneNames = liveData ? Object.values(liveData).map(z => z.name.replace('Student ', '').replace('Academic ', '')) : ['Canteen', 'Library', 'PG', 'New Block', 'D Block'];
+    const zoneActual = liveData ? Object.values(liveData).map(z => z.current) : [0, 0, 0, 0, 0];
+    const zonePredicted = liveData ? Object.values(liveData).map(z => z.predicted) : [0, 0, 0, 0, 0];
+
     const comparisonData = {
-        labels: ['8 AM', '10 AM', '12 PM', '2 PM', '4 PM', '6 PM', '8 PM'],
+        labels: zoneNames,
         datasets: [
             {
-                label: 'Today',
-                data: [800, 1200, 1400, 1350, 1100, 900, 600],
+                label: 'Current (Actual)',
+                data: zoneActual,
                 backgroundColor: 'rgba(59, 130, 246, 0.8)',
                 borderColor: 'rgb(59, 130, 246)',
-                borderWidth: 1
+                borderWidth: 1,
+                borderRadius: 6
             },
             {
-                label: 'Yesterday',
-                data: [750, 1150, 1300, 1250, 1050, 850, 550],
-                backgroundColor: 'rgba(156, 163, 175, 0.5)',
-                borderColor: 'rgb(156, 163, 175)',
-                borderWidth: 1
+                label: 'ML Predicted',
+                data: zonePredicted,
+                backgroundColor: 'rgba(147, 51, 234, 0.6)',
+                borderColor: 'rgb(147, 51, 234)',
+                borderWidth: 1,
+                borderRadius: 6
             }
         ]
     };
 
     const comparisonOptions = {
         responsive: true,
-        plugins: { legend: { position: 'top', labels: { color: '#9ca3af' } } },
+        plugins: { legend: { position: 'top', labels: { color: '#9ca3af', usePointStyle: true } } },
         scales: {
             y: { beginAtZero: true, grid: { color: 'rgba(200, 200, 200, 0.1)' }, ticks: { color: '#9ca3af' } },
             x: { grid: { display: false }, ticks: { color: '#9ca3af' } }
@@ -237,14 +286,14 @@ const Prediction = () => {
             {/* Charts Section */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-slate-700">
-                    <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">24-Hour Crowd Forecast</h3>
+                    <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Live Crowd Trend — Actual vs ML Predicted</h3>
                     <div className="h-80">
                         <Line data={forecastData} options={forecastOptions} />
                     </div>
                 </div>
 
                 <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-slate-700">
-                    <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Historical Comparison (Today vs Yesterday)</h3>
+                    <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Zone Comparison — Actual vs ML Predicted</h3>
                     <div className="h-80">
                         <Bar data={comparisonData} options={comparisonOptions} />
                     </div>

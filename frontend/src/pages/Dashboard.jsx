@@ -141,13 +141,41 @@ const Dashboard = () => {
         if (updated) setSelectedRegion(updated);
     }, [regions, selectedRegion.id]);
 
-    // Chart Data
+    // Trend data for charts
+    const [trendLabels, setTrendLabels] = useState([]);
+    const [trendActual, setTrendActual] = useState([]);
+    const [trendPredicted, setTrendPredicted] = useState([]);
+
+    // Fetch trend data
+    useEffect(() => {
+        const fetchTrend = async () => {
+            try {
+                const res = await fetch('http://127.0.0.1:5000/api/trend');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.length > 0) {
+                        // Sample every 5th point to avoid overcrowding the chart
+                        const step = Math.max(1, Math.floor(data.length / 30));
+                        const sampled = data.filter((_, i) => i % step === 0 || i === data.length - 1);
+                        setTrendLabels(sampled.map(d => d.hour));
+                        setTrendActual(sampled.map(d => d.total_actual));
+                        setTrendPredicted(sampled.map(d => d.total_predicted));
+                    }
+                }
+            } catch (e) { /* backend not ready */ }
+        };
+        fetchTrend();
+        const intv = setInterval(fetchTrend, 5000);
+        return () => clearInterval(intv);
+    }, []);
+
+    // Chart Data — driven by live trend API
     const chartData = {
-        labels: ['8:00', '9:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'],
+        labels: trendLabels.length > 0 ? trendLabels : ['--'],
         datasets: [
             {
                 label: 'Actual',
-                data: [650, 800, 1200, 1450, 1600, 1550, 1400, 1200, 950, 800],
+                data: trendActual.length > 0 ? trendActual : [0],
                 borderColor: '#3b82f6',
                 backgroundColor: (context) => {
                     const ctx = context.chart.ctx;
@@ -158,15 +186,15 @@ const Dashboard = () => {
                 },
                 fill: true,
                 tension: 0.4,
-                pointRadius: 4,
+                pointRadius: 3,
                 pointHoverRadius: 6,
                 borderWidth: 2,
                 hidden: !chartDataVisible[0]
             },
             {
-                label: 'Predicted',
-                data: [600, 850, 1150, 1500, 1650, 1600, 1450, 1250, 1000, 850],
-                borderColor: '#9ca3af',
+                label: 'ML Predicted',
+                data: trendPredicted.length > 0 ? trendPredicted : [0],
+                borderColor: '#a855f7',
                 borderDash: [5, 5],
                 fill: false,
                 tension: 0.4,
@@ -393,7 +421,7 @@ const Dashboard = () => {
                 <div className="p-5 border-b border-gray-100 dark:border-slate-700 flex flex-col md:flex-row justify-between items-center gap-4">
                     <div>
                         <h3 className="font-bold text-gray-900 dark:text-white">Crowd Trend Analysis</h3>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">Actual vs Predicted density over 12 hours</p>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">Live Actual vs ML Predicted density</p>
                     </div>
                     <div className="flex bg-gray-100 dark:bg-slate-900 p-1 rounded-xl">
                         <button className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${chartDataVisible[0] && chartDataVisible[1] ? 'bg-white dark:bg-slate-700 text-gray-900 dark:text-white shadow-sm' : 'text-gray-500 dark:text-gray-400'}`} onClick={() => setChartDataVisible([true, true])}>All</button>
