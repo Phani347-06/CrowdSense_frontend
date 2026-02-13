@@ -56,7 +56,8 @@ const Prediction = () => {
     }, []);
 
     // Compute stats from live data
-    const totalDevices = liveData ? Object.values(liveData).reduce((sum, z) => sum + z.current, 0) : 0;
+    const totalCurrent = liveData ? Object.values(liveData).reduce((sum, z) => sum + z.current, 0) : 0;
+    const totalPredicted = liveData ? Object.values(liveData).reduce((sum, z) => sum + z.predicted, 0) : 0;
     const totalPeople = liveData ? Object.values(liveData).reduce((sum, z) => sum + z.est_people, 0) : 0;
     const maxCri = liveData ? Math.max(...Object.values(liveData).map(z => z.cri)) : 0;
     const peakZone = liveData ? Object.values(liveData).reduce((a, b) => a.cri > b.cri ? a : b, { cri: 0 }) : null;
@@ -240,8 +241,8 @@ const Prediction = () => {
                             <TrendingUp size={24} />
                         </div>
                         <div>
-                            <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">Predicted (30m)</p>
-                            <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{totalDevices > 0 ? totalDevices.toLocaleString() : '—'}</h3>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">Predicted Demand (30m)</p>
+                            <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{totalPredicted > 0 ? totalPredicted.toLocaleString() : '—'}</h3>
                         </div>
                     </div>
                 </div>
