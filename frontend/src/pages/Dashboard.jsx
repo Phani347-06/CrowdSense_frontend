@@ -61,6 +61,7 @@ const StatCard = ({ icon: Icon, color, title, value, trend, isPositive, statusTe
 
 const Dashboard = () => {
     const [regions, setRegions] = useState(regionsData);
+    const [flowData, setFlowData] = useState([]);
     const [zoomLevel, setZoomLevel] = useState(1);
     const [selectedRegion, setSelectedRegion] = useState(regionsData[0]);
     const [chartDataVisible, setChartDataVisible] = useState([true, true]); // [Actual, Predicted]
@@ -70,35 +71,55 @@ const Dashboard = () => {
     const [translate, setTranslate] = useState({ x: 0, y: 0 });
     const [isDragging, setIsDragging] = useState(false);
 
+    const getRegionCoords = (id) => {
+        const r = regions.find(reg => reg.id === id);
+        return r ? { x: r.x, y: r.y } : { x: '0%', y: '0%' };
+    };
+
     // Live Data Integration
     useEffect(() => {
         const fetchLiveData = async () => {
             try {
-                const response = await fetch('http://localhost:8000/live-data');
+                const response = await fetch('http://127.0.0.1:5000/api/live');
                 if (response.ok) {
                     const data = await response.json();
                     if (data && Object.keys(data).length > 0) {
+                        const newFlows = [];
+
                         setRegions(prevRegions => prevRegions.map(region => {
                             const incoming = data[region.id];
                             if (incoming) {
+                                // Collect flows
+                                if (incoming.flows && incoming.flows.length > 0) {
+                                    incoming.flows.forEach(f => {
+                                        newFlows.push({
+                                            from: f.from_zone,
+                                            to: f.to_zone,
+                                            intensity: f.count > 20 ? 'high' : 'medium'
+                                        });
+                                    });
+                                }
+
                                 return {
                                     ...region,
                                     current: incoming.current,
-                                    status: incoming.status,
-                                    statusColor: incoming.statusColor
+                                    status: incoming.risk_level === "CRITICAL" ? "Critical Surge" : incoming.status,
+                                    statusColor: incoming.risk_level === "CRITICAL" ? "text-red-600" : incoming.statusColor,
+                                    cri: incoming.cri,
+                                    surge: incoming.surge
                                 };
                             }
                             return region;
                         }));
+                        setFlowData(newFlows);
                     }
                 }
             } catch (error) {
-                // Silently fail if backend is offline
                 console.log("Waiting for backend...");
             }
         };
 
-        fetchLiveData(); // Initial fetch
+        fetchLiveData();
         const interval = setInterval(fetchLiveData, 2000);
         return () => clearInterval(interval);
     }, []);
@@ -158,7 +179,6 @@ const Dashboard = () => {
 
     // Map Interaction Handlers
     const handleWheel = (e) => {
-        // Only zoom if mouse is over map container
         e.preventDefault();
         e.stopPropagation();
         const delta = e.deltaY > 0 ? -0.1 : 0.1;
@@ -233,14 +253,39 @@ const Dashboard = () => {
                         >
                             <iframe
                                 className="absolute inset-0 w-full h-full border-none opacity-80 dark:opacity-60 saturate-[.85] contrast-[1.1] pointer-events-none"
-                                src="https://www.openstreetmap.org/export/embed.html?bbox=78.383911,17.535606,78.388299,17.541877&amp;layer=mapnik"
+                                src="https://www.openstreetmap.org/export/embed.html?bbox=78.383911,17.535606,78.388299,17.541877&layer=mapnik"
                             ></iframe>
 
-                            {/* Grid/Background is handled by CSS class .map-visual in index.css */}
+                            {/* Flow Arrows Overlay */}
+                            <svg className="absolute inset-0 w-full h-full pointer-events-none z-0 filter drop-shadow-sm">
+                                <defs>
+                                    <marker id="arrowhead-flow" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
+                                        <polygon points="0 0, 6 2, 0 4" fill="#3b82f6" opacity="0.6" />
+                                    </marker>
+                                </defs>
+                                {flowData.map((flow, i) => {
+                                    const start = getRegionCoords(flow.from);
+                                    const end = getRegionCoords(flow.to);
+                                    if (start.x === '0%' || end.x === '0%') return null;
+
+                                    return (
+                                        <line
+                                            key={i}
+                                            x1={start.x} y1={start.y}
+                                            x2={end.x} y2={end.y}
+                                            stroke="#3b82f6"
+                                            strokeWidth="2"
+                                            strokeDasharray="4,4"
+                                            markerEnd="url(#arrowhead-flow)"
+                                            className="opacity-50 animate-pulse"
+                                        />
+                                    );
+                                })}
+                            </svg>
 
                             {regions.map(region => (
                                 <div key={region.id}
-                                    className={`group/marker marker ${region.status.includes('High') ? 'marker-red' : region.status.includes('Moderate') ? 'marker-amber' : 'marker-green'} ${selectedRegion.id === region.id ? 'active' : ''}`}
+                                    className={`group/marker marker ${region.status.includes('High') || region.cri >= 70 ? 'marker-red' : region.status.includes('Moderate') || region.cri >= 50 ? 'marker-amber' : 'marker-green'} ${selectedRegion.id === region.id ? 'active' : ''}`}
                                     style={{ left: region.x, top: region.y }}
                                     onClick={(e) => { e.stopPropagation(); setSelectedRegion(region); }}
                                 >

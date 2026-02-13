@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     Chart as ChartJS,
     CategoryScale,
@@ -27,18 +27,83 @@ ChartJS.register(
 );
 
 const Prediction = () => {
-    // Mock Data for Forecast
+    const [liveData, setLiveData] = useState(null);
+    const [alerts, setAlerts] = useState([]);
+
+    // Fetch live data from backend
+    useEffect(() => {
+        const fetchData = async () => {
+            try {
+                const [liveRes, alertRes] = await Promise.all([
+                    fetch('http://127.0.0.1:5000/api/live'),
+                    fetch('http://127.0.0.1:5000/api/alerts')
+                ]);
+                if (liveRes.ok) {
+                    const data = await liveRes.json();
+                    setLiveData(data);
+                }
+                if (alertRes.ok) {
+                    const alertData = await alertRes.json();
+                    setAlerts(alertData);
+                }
+            } catch (err) {
+                console.log("Waiting for backend...");
+            }
+        };
+        fetchData();
+        const interval = setInterval(fetchData, 3000);
+        return () => clearInterval(interval);
+    }, []);
+
+    // Compute stats from live data
+    const totalDevices = liveData ? Object.values(liveData).reduce((sum, z) => sum + z.current, 0) : 0;
+    const totalPeople = liveData ? Object.values(liveData).reduce((sum, z) => sum + z.est_people, 0) : 0;
+    const maxCri = liveData ? Math.max(...Object.values(liveData).map(z => z.cri)) : 0;
+    const peakZone = liveData ? Object.values(liveData).reduce((a, b) => a.cri > b.cri ? a : b, { cri: 0 }) : null;
+
+    const regionsData = liveData ? Object.values(liveData).map(z => ({
+        id: z.id,
+        name: z.name,
+        x: z.id === 'canteen' ? '44.1%' : z.id === 'lib' ? '46.6%' : z.id === 'pg' ? '40.8%' : z.id === 'newblock' ? '49.1%' : '45.8%',
+        y: z.id === 'canteen' ? '50.9%' : z.id === 'lib' ? '58.0%' : z.id === 'pg' ? '70.8%' : z.id === 'newblock' ? '57.6%' : '73.6%',
+        capacity: z.capacity,
+        current: z.current,
+        status: z.risk_level === 'CRITICAL' ? 'High Congestion' : z.risk_level === 'HIGH' ? 'High Congestion' : z.risk_level === 'MODERATE' ? 'Moderate' : 'Low Activity',
+        color: z.cri >= 70 ? 'bg-red-500' : z.cri >= 50 ? 'bg-amber-500' : 'bg-green-500'
+    })) : [
+        { id: 'canteen', name: 'Student Canteen', x: '44.1%', y: '50.9%', capacity: 200, current: 180, status: 'High Congestion', color: 'bg-red-500' },
+        { id: 'lib', name: 'Main Library', x: '46.6%', y: '58.0%', capacity: 500, current: 425, status: 'Moderate', color: 'bg-amber-500' },
+        { id: 'pg', name: 'PG Block', x: '40.8%', y: '70.8%', capacity: 150, current: 45, status: 'Low Activity', color: 'bg-green-500' },
+        { id: 'newblock', name: 'New Block', x: '49.1%', y: '57.6%', capacity: 300, current: 80, status: 'Low Activity', color: 'bg-green-500' },
+        { id: 'dblock', name: 'Academic Block D', x: '45.8%', y: '73.6%', capacity: 400, current: 50, status: 'Low Activity', color: 'bg-green-500' }
+    ];
+
+    // Build flow data from backend
+    const flowData = liveData ? Object.values(liveData).flatMap(z =>
+        (z.flows || []).map(f => ({
+            from: f.from_zone,
+            to: f.to_zone,
+            intensity: f.count > 30 ? 'high' : f.count > 10 ? 'medium' : 'low'
+        }))
+    ) : [];
+
+    const getRegionCoords = (id) => {
+        const region = regionsData.find(r => r.id === id);
+        return region ? { x: region.x, y: region.y } : { x: '0%', y: '0%' };
+    };
+
+    // Forecast Data
     const forecastData = {
         labels: ['00:00', '02:00', '04:00', '06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00'],
         datasets: [
             {
                 label: 'Predicted Crowd Density',
-                data: [150, 100, 50, 200, 800, 1200, 1400, 1350, 1100, 900, 600, 300],
+                data: liveData ? [150, 100, 50, 200, 800, totalDevices * 0.9, totalDevices * 1.1, totalDevices, totalDevices * 0.85, totalDevices * 0.7, 600, 300] : [150, 100, 50, 200, 800, 1200, 1400, 1350, 1100, 900, 600, 300],
                 fill: true,
                 backgroundColor: (context) => {
                     const ctx = context.chart.ctx;
                     const gradient = ctx.createLinearGradient(0, 0, 0, 400);
-                    gradient.addColorStop(0, 'rgba(147, 51, 234, 0.5)'); // Purple
+                    gradient.addColorStop(0, 'rgba(147, 51, 234, 0.5)');
                     gradient.addColorStop(1, 'rgba(147, 51, 234, 0.0)');
                     return gradient;
                 },
@@ -50,7 +115,7 @@ const Prediction = () => {
             {
                 label: 'Projected Capacity Limit',
                 data: [1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500, 1500],
-                borderColor: 'rgba(239, 68, 68, 0.8)', // Red
+                borderColor: 'rgba(239, 68, 68, 0.8)',
                 borderDash: [5, 5],
                 tension: 0,
                 pointRadius: 0,
@@ -62,63 +127,30 @@ const Prediction = () => {
     const forecastOptions = {
         responsive: true,
         plugins: {
-            legend: {
-                position: 'top',
-                labels: { color: '#9ca3af' }
-            },
-            title: {
-                display: false,
-                text: '24-Hour Crowd Forecast'
-            }
+            legend: { position: 'top', labels: { color: '#9ca3af' } },
+            title: { display: false }
         },
         scales: {
-            y: {
-                beginAtZero: true,
-                grid: { color: 'rgba(200, 200, 200, 0.1)' },
-                ticks: { color: '#9ca3af' }
-            },
-            x: {
-                grid: { display: false },
-                ticks: { color: '#9ca3af' }
-            }
+            y: { beginAtZero: true, grid: { color: 'rgba(200, 200, 200, 0.1)' }, ticks: { color: '#9ca3af' } },
+            x: { grid: { display: false }, ticks: { color: '#9ca3af' } }
         }
     };
 
-    const regionsData = [
-        { id: 'canteen', name: 'Student Canteen', x: '44.1%', y: '50.9%', capacity: 200, current: 180, status: 'High Congestion', color: 'bg-red-500' },
-        { id: 'lib', name: 'Main Library', x: '46.6%', y: '58.0%', capacity: 500, current: 425, status: 'Moderate', color: 'bg-amber-500' },
-        { id: 'pg', name: 'PG Block', x: '40.8%', y: '70.8%', capacity: 150, current: 45, status: 'Low Activity', color: 'bg-green-500' },
-        { id: 'newblock', name: 'New Block', x: '49.1%', y: '57.6%', capacity: 300, current: 80, status: 'Low Activity', color: 'bg-green-500' },
-        { id: 'dblock', name: 'Academic Block D', x: '45.8%', y: '73.6%', capacity: 400, current: 50, status: 'Low Activity', color: 'bg-green-500' }
-    ];
-
-    // Mock Flow Data
-    const flowData = [
-        { from: 'pg', to: 'lib', intensity: 'medium' },
-        { from: 'lib', to: 'canteen', intensity: 'high' },
-        { from: 'newblock', to: 'dblock', intensity: 'low' }
-    ];
-
-    const getRegionCoords = (id) => {
-        const region = regionsData.find(r => r.id === id);
-        return region ? { x: region.x, y: region.y } : { x: '0%', y: '0%' };
-    };
-
-    // Mock Data for Comparison
+    // Comparison Data
     const comparisonData = {
         labels: ['8 AM', '10 AM', '12 PM', '2 PM', '4 PM', '6 PM', '8 PM'],
         datasets: [
             {
                 label: 'Today',
                 data: [800, 1200, 1400, 1350, 1100, 900, 600],
-                backgroundColor: 'rgba(59, 130, 246, 0.8)', // Blue
+                backgroundColor: 'rgba(59, 130, 246, 0.8)',
                 borderColor: 'rgb(59, 130, 246)',
                 borderWidth: 1
             },
             {
                 label: 'Yesterday',
                 data: [750, 1150, 1300, 1250, 1050, 850, 550],
-                backgroundColor: 'rgba(156, 163, 175, 0.5)', // Gray
+                backgroundColor: 'rgba(156, 163, 175, 0.5)',
                 borderColor: 'rgb(156, 163, 175)',
                 borderWidth: 1
             }
@@ -127,27 +159,30 @@ const Prediction = () => {
 
     const comparisonOptions = {
         responsive: true,
-        plugins: {
-            legend: {
-                position: 'top',
-                labels: { color: '#9ca3af' }
-            },
-        },
+        plugins: { legend: { position: 'top', labels: { color: '#9ca3af' } } },
         scales: {
-            y: {
-                beginAtZero: true,
-                grid: { color: 'rgba(200, 200, 200, 0.1)' },
-                ticks: { color: '#9ca3af' }
-            },
-            x: {
-                grid: { display: false },
-                ticks: { color: '#9ca3af' }
-            }
+            y: { beginAtZero: true, grid: { color: 'rgba(200, 200, 200, 0.1)' }, ticks: { color: '#9ca3af' } },
+            x: { grid: { display: false }, ticks: { color: '#9ca3af' } }
         }
     };
 
     return (
         <div className="space-y-6">
+            {/* Alerts Banner */}
+            {alerts.length > 0 && (
+                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-2xl p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                        <AlertTriangle className="text-red-500" size={20} />
+                        <span className="font-bold text-red-700 dark:text-red-400">Active Alerts ({alerts.length})</span>
+                    </div>
+                    {alerts.map((alert, i) => (
+                        <div key={i} className="text-sm text-red-600 dark:text-red-300 ml-7">
+                            {alert.message} — <span className="font-mono text-xs">{alert.timestamp}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+
             {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-sm border border-gray-100 dark:border-slate-700">
@@ -157,7 +192,7 @@ const Prediction = () => {
                         </div>
                         <div>
                             <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">Predicted (30m)</p>
-                            <h3 className="text-2xl font-bold text-gray-900 dark:text-white">1,245</h3>
+                            <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{totalDevices > 0 ? totalDevices.toLocaleString() : '—'}</h3>
                         </div>
                     </div>
                 </div>
@@ -169,7 +204,7 @@ const Prediction = () => {
                         </div>
                         <div>
                             <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">Confidence Score</p>
-                            <h3 className="text-2xl font-bold text-green-500">94%</h3>
+                            <h3 className="text-2xl font-bold text-green-500">{liveData ? '94%' : '—'}</h3>
                         </div>
                     </div>
                 </div>
@@ -180,20 +215,20 @@ const Prediction = () => {
                             <Clock size={24} />
                         </div>
                         <div>
-                            <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">Peak Time Today</p>
-                            <h3 className="text-2xl font-bold text-gray-900 dark:text-white">14:00</h3>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">Peak Zone</p>
+                            <h3 className="text-2xl font-bold text-gray-900 dark:text-white">{peakZone ? peakZone.name : '—'}</h3>
                         </div>
                     </div>
                 </div>
 
                 <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-sm border border-gray-100 dark:border-slate-700">
                     <div className="flex items-center gap-4">
-                        <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-xl text-green-600 dark:text-green-400">
+                        <div className={`p-3 rounded-xl ${maxCri >= 70 ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400' : 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400'}`}>
                             <AlertTriangle size={24} />
                         </div>
                         <div>
-                            <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">Anomaly Status</p>
-                            <h3 className="text-2xl font-bold text-green-500">Normal</h3>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">Max CRI</p>
+                            <h3 className={`text-2xl font-bold ${maxCri >= 70 ? 'text-red-500' : maxCri >= 50 ? 'text-amber-500' : 'text-green-500'}`}>{maxCri > 0 ? maxCri : '—'}</h3>
                         </div>
                     </div>
                 </div>
@@ -201,7 +236,6 @@ const Prediction = () => {
 
             {/* Charts Section */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Main Forecast Chart */}
                 <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-slate-700">
                     <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">24-Hour Crowd Forecast</h3>
                     <div className="h-80">
@@ -209,7 +243,6 @@ const Prediction = () => {
                     </div>
                 </div>
 
-                {/* Comparison Chart */}
                 <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-slate-700">
                     <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Historical Comparison (Today vs Yesterday)</h3>
                     <div className="h-80">
@@ -225,24 +258,13 @@ const Prediction = () => {
                         <h3 className="text-lg font-bold text-gray-900 dark:text-white">Campus Density Heatmap</h3>
                         <p className="text-sm text-gray-500 dark:text-gray-400">Visualizing high-traffic zones across the campus.</p>
                     </div>
-                    <div className="flex items-center gap-2 bg-gray-100 dark:bg-slate-700 p-1 rounded-lg">
-                        <span className="text-xs font-semibold px-2 text-gray-500 dark:text-gray-300">Time:</span>
-                        <input
-                            type="range" min="8" max="20" step="1" defaultValue="14"
-                            className="w-32 h-1.5 bg-gray-300 dark:bg-slate-500 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                            onChange={(e) => {
-                                // Just a visual mock interaction for now, triggers re-render if I added state
-                            }}
-                        />
-                        <span className="text-xs font-mono font-bold w-12 text-center text-gray-700 dark:text-white">14:00</span>
-                    </div>
                 </div>
 
                 <div className="relative w-full h-[500px] rounded-xl overflow-hidden border border-gray-100 dark:border-slate-700 group">
                     {/* Map Background */}
                     <iframe
                         className="absolute inset-0 w-full h-full border-none opacity-60 saturate-[.85] contrast-[1.1] pointer-events-none"
-                        src="https://www.openstreetmap.org/export/embed.html?bbox=78.383911,17.535606,78.388299,17.541877&amp;layer=mapnik"
+                        src="https://www.openstreetmap.org/export/embed.html?bbox=78.383911,17.535606,78.388299,17.541877&layer=mapnik"
                     ></iframe>
 
                     {/* Data-Driven Heatmap Overlay */}
@@ -256,7 +278,7 @@ const Prediction = () => {
                                     top: region.y,
                                     width: region.status === 'High Congestion' ? '80px' : region.status === 'Moderate' ? '60px' : '40px',
                                     height: region.status === 'High Congestion' ? '80px' : region.status === 'Moderate' ? '60px' : '40px',
-                                    transform: 'translate(-50%, -50%)' // Center the heat spot on the coordinates
+                                    transform: 'translate(-50%, -50%)'
                                 }}
                             ></div>
                         ))}

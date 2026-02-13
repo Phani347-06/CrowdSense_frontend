@@ -1,20 +1,57 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AlertTriangle, Info, CheckCircle, Bell, Users, Search, Filter } from 'lucide-react';
 
-const regionsData = [
+const defaultRegions = [
     { id: 'lib', name: 'Main Library', current: 425, capacity: 500, floor: 1, zone: 'A', status: 'High Congestion' },
     { id: 'canteen', name: 'Student Canteen', current: 120, capacity: 200, floor: 2, zone: 'B', status: 'Moderate' },
-    { id: 'labs', name: 'Science Labs', current: 45, capacity: 150, floor: 1, zone: 'C', status: 'Low Activity' },
-    { id: 'sports', name: 'Sports Complex', current: 80, capacity: 300, floor: 3, zone: 'D', status: 'Low Activity' },
-    { id: 'audi', name: 'Auditorium', current: 0, capacity: 1000, floor: 0, zone: 'E', status: 'Closed' },
+    { id: 'pg', name: 'PG Block', current: 45, capacity: 150, floor: 1, zone: 'C', status: 'Low Activity' },
+    { id: 'dblock', name: 'Academic Block D', current: 50, capacity: 400, floor: 3, zone: 'D', status: 'Low Activity' },
+    { id: 'jb', name: 'J-Block', current: 800, capacity: 1300, floor: 0, zone: 'E', status: 'Moderate' },
 ];
 
 const Events = () => {
-    const [regions, setRegions] = useState(regionsData);
+    const [regions, setRegions] = useState(defaultRegions);
     const [search, setSearch] = useState('');
+    const [capacityOverrides, setCapacityOverrides] = useState({});
+
+    // Fetch live data from backend
+    useEffect(() => {
+        const fetchLiveData = async () => {
+            try {
+                const response = await fetch('http://127.0.0.1:5000/api/live');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data && Object.keys(data).length > 0) {
+                        setRegions(prev => prev.map(region => {
+                            const incoming = data[region.id];
+                            if (incoming) {
+                                return {
+                                    ...region,
+                                    current: incoming.current,
+                                    capacity: capacityOverrides[region.id] || incoming.capacity,
+                                    status: incoming.risk_level === 'CRITICAL' ? 'High Congestion' : incoming.risk_level === 'HIGH' ? 'High Congestion' : incoming.risk_level === 'MODERATE' ? 'Moderate' : 'Low Activity',
+                                    cri: incoming.cri,
+                                    predicted: incoming.predicted,
+                                    surge: incoming.surge
+                                };
+                            }
+                            return region;
+                        }));
+                    }
+                }
+            } catch (error) {
+                console.log("Waiting for backend...");
+            }
+        };
+        fetchLiveData();
+        const interval = setInterval(fetchLiveData, 3000);
+        return () => clearInterval(interval);
+    }, [capacityOverrides]);
 
     const handleCapacityChange = (id, newCap) => {
-        setRegions(regions.map(r => r.id === id ? { ...r, capacity: Number(newCap) } : r));
+        const val = Number(newCap);
+        setCapacityOverrides(prev => ({ ...prev, [id]: val }));
+        setRegions(regions.map(r => r.id === id ? { ...r, capacity: val } : r));
     };
 
     const filteredRegions = regions.filter(r => r.name.toLowerCase().includes(search.toLowerCase()));
@@ -53,7 +90,6 @@ const Events = () => {
                         loadColor = 'bg-gray-400';
                         Icon = Info;
                     } else {
-                        // Dynamic status based on load
                         if (load >= 90) {
                             statusText = 'High Congestion';
                             statusColor = 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400';
@@ -71,6 +107,9 @@ const Events = () => {
                             Icon = CheckCircle;
                         }
                     }
+
+                    // Show warning if predicted density exceeds event capacity
+                    const overCapacity = region.predicted && region.predicted > region.capacity;
 
                     return (
                         <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-sm border border-gray-100 dark:border-slate-700 hover:shadow-md transition-shadow group" key={region.id}>
@@ -91,6 +130,26 @@ const Events = () => {
                                     <Icon size={12} /> {statusText}
                                 </div>
                             </div>
+
+                            {/* Over Capacity Warning */}
+                            {overCapacity && (
+                                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-2 mb-4 flex items-center gap-2">
+                                    <AlertTriangle size={14} className="text-red-500 shrink-0" />
+                                    <span className="text-xs font-semibold text-red-600 dark:text-red-400">
+                                        Predicted density ({region.predicted}) exceeds capacity ({region.capacity})!
+                                    </span>
+                                </div>
+                            )}
+
+                            {/* Surge Badge */}
+                            {region.surge && (
+                                <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-2 mb-4 flex items-center gap-2">
+                                    <AlertTriangle size={14} className="text-amber-500 shrink-0" />
+                                    <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">
+                                        Surge detected! Rapid crowd increase.
+                                    </span>
+                                </div>
+                            )}
 
                             <div className="flex items-end justify-between mb-2">
                                 <div>
