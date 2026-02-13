@@ -64,7 +64,8 @@ const Dashboard = () => {
     const [flowData, setFlowData] = useState([]);
     const [zoomLevel, setZoomLevel] = useState(1);
     const [selectedRegion, setSelectedRegion] = useState(regionsData[0]);
-    const [chartDataVisible, setChartDataVisible] = useState([true, true]); // [Actual, Predicted]
+    const [chartDataVisible, setChartDataVisible] = useState([true, true]);
+    const [summary, setSummary] = useState({ total_devices: 0, total_people: 0, avg_cri: 0, max_cri: 0, peak_zone: '—', alert_count: 0 });
 
     const mapRef = useRef(null);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
@@ -80,16 +81,19 @@ const Dashboard = () => {
     useEffect(() => {
         const fetchLiveData = async () => {
             try {
-                const response = await fetch('http://127.0.0.1:5000/api/live');
-                if (response.ok) {
-                    const data = await response.json();
+                const [liveRes, summaryRes] = await Promise.all([
+                    fetch('http://127.0.0.1:5000/api/live'),
+                    fetch('http://127.0.0.1:5000/api/summary')
+                ]);
+
+                if (liveRes.ok) {
+                    const data = await liveRes.json();
                     if (data && Object.keys(data).length > 0) {
                         const newFlows = [];
 
                         setRegions(prevRegions => prevRegions.map(region => {
                             const incoming = data[region.id];
                             if (incoming) {
-                                // Collect flows
                                 if (incoming.flows && incoming.flows.length > 0) {
                                     incoming.flows.forEach(f => {
                                         newFlows.push({
@@ -99,12 +103,14 @@ const Dashboard = () => {
                                         });
                                     });
                                 }
-
                                 return {
                                     ...region,
                                     current: incoming.current,
-                                    status: incoming.risk_level === "CRITICAL" ? "Critical Surge" : incoming.status,
-                                    statusColor: incoming.risk_level === "CRITICAL" ? "text-red-600" : incoming.statusColor,
+                                    predicted: incoming.predicted,
+                                    est_people: incoming.est_people,
+                                    growth_rate: incoming.growth_rate,
+                                    status: incoming.risk_level === 'CRITICAL' ? 'Critical Surge' : incoming.risk_level === 'HIGH' ? 'High Congestion' : incoming.risk_level === 'MODERATE' ? 'Moderate' : 'Low Activity',
+                                    statusColor: incoming.cri >= 70 ? 'text-red-500' : incoming.cri >= 50 ? 'text-amber-500' : 'text-green-500',
                                     cri: incoming.cri,
                                     surge: incoming.surge
                                 };
@@ -114,8 +120,13 @@ const Dashboard = () => {
                         setFlowData(newFlows);
                     }
                 }
+
+                if (summaryRes.ok) {
+                    const sumData = await summaryRes.json();
+                    setSummary(sumData);
+                }
             } catch (error) {
-                console.log("Waiting for backend...");
+                console.log('Waiting for backend...');
             }
         };
 
@@ -205,20 +216,20 @@ const Dashboard = () => {
             {/* Top Stats */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 relative">
                 <StatCard
-                    icon={Wifi} color="blue" title="Total Devices" value="1,245" trend="+12%" isPositive={true}
-                    details={[{ label: 'Active', value: '890' }, { label: 'Idle', value: '355' }]}
+                    icon={Wifi} color="blue" title="Est. People" value={summary.total_devices ? summary.total_devices.toLocaleString() : '—'} trend={summary.total_devices > 0 ? 'Live' : null} isPositive={true}
+                    details={[{ label: 'Avg CRI', value: summary.avg_cri || 0 }, { label: 'Alerts', value: summary.alert_count || 0 }]}
                 />
                 <StatCard
-                    icon={Users} color="purple" title="Est. People Today" value="950" trend="+5%" isPositive={true}
-                    details={[{ label: 'Students', value: '800' }, { label: 'Staff', value: '150' }]}
+                    icon={Users} color="purple" title="Total Devices" value={summary.total_people ? summary.total_people.toLocaleString() : '—'} trend={summary.total_people > 0 ? 'Live' : null} isPositive={true}
+                    details={[{ label: 'Peak Zone', value: summary.peak_zone || '—' }, { label: 'Max CRI', value: summary.max_cri || 0 }]}
                 />
                 <StatCard
-                    icon={Wifi} color="green" title="Live Devices" value="342" statusText="Active" statusColor="text-green-500"
-                    details={[{ label: '2.4GHz', value: '200' }, { label: '5GHz', value: '142' }]}
+                    icon={Wifi} color="green" title="Live Zones" value={`${(summary.zones_moderate || 0) + (summary.zones_high || 0) + (summary.zones_critical || 0) + (summary.zones_low || 0)}`} statusText="Active" statusColor="text-green-500"
+                    details={[{ label: 'Critical', value: summary.zones_critical || 0 }, { label: 'Moderate', value: summary.zones_moderate || 0 }]}
                 />
                 <StatCard
-                    icon={MapPin} color="orange" title="Current People" value="410" statusText="Moderate" statusColor="text-orange-500"
-                    details={[{ label: 'Density', value: '0.4/m²' }, { label: 'Peak', value: '12:30' }]}
+                    icon={MapPin} color="orange" title="Max CRI" value={summary.max_cri || '—'} statusText={summary.max_cri >= 70 ? 'High Risk' : summary.max_cri >= 50 ? 'Moderate' : 'Normal'} statusColor={summary.max_cri >= 70 ? 'text-red-500' : summary.max_cri >= 50 ? 'text-amber-500' : 'text-green-500'}
+                    details={[{ label: 'Peak', value: summary.peak_zone || '—' }, { label: 'Time', value: summary.timestamp || '—' }]}
                 />
             </div>
 
@@ -323,14 +334,24 @@ const Dashboard = () => {
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-4 mb-6">
+                        <div className="grid grid-cols-2 gap-4 mb-4">
                             <div className="bg-gray-50 dark:bg-slate-900/50 p-3 rounded-xl">
                                 <label className="text-xs text-gray-500 dark:text-gray-400 font-medium block mb-1">Capacity</label>
                                 <div className="text-lg font-bold text-gray-900 dark:text-white font-mono">{Math.round((selectedRegion.current / selectedRegion.capacity) * 100)}%</div>
                             </div>
                             <div className="bg-gray-50 dark:bg-slate-900/50 p-3 rounded-xl">
-                                <label className="text-xs text-gray-500 dark:text-gray-400 font-medium block mb-1">Peak Time</label>
-                                <div className="text-lg font-bold text-gray-900 dark:text-white">{selectedRegion.peak}</div>
+                                <label className="text-xs text-gray-500 dark:text-gray-400 font-medium block mb-1">CRI Score</label>
+                                <div className={`text-lg font-bold font-mono ${(selectedRegion.cri || 0) >= 70 ? 'text-red-500' : (selectedRegion.cri || 0) >= 50 ? 'text-amber-500' : 'text-green-500'}`}>{selectedRegion.cri || '—'}</div>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 mb-6">
+                            <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-xl">
+                                <label className="text-xs text-blue-600 dark:text-blue-400 font-medium block mb-1">ML Predicted</label>
+                                <div className="text-lg font-bold text-blue-700 dark:text-blue-300 font-mono">{selectedRegion.predicted || '—'}</div>
+                            </div>
+                            <div className="bg-gray-50 dark:bg-slate-900/50 p-3 rounded-xl">
+                                <label className="text-xs text-gray-500 dark:text-gray-400 font-medium block mb-1">Growth Rate</label>
+                                <div className={`text-lg font-bold font-mono ${(selectedRegion.growth_rate || 0) > 0 ? 'text-red-500' : 'text-green-500'}`}>{selectedRegion.growth_rate != null ? `${selectedRegion.growth_rate}%` : '—'}</div>
                             </div>
                         </div>
 
