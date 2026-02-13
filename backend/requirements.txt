@@ -1,3 +1,7 @@
-fastapi
-uvicorn
+flask
+flask-cors
+joblib
+scikit-learn
 pandas
+numpy
+xgboost

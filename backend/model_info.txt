@@ -1,0 +1,5 @@
+KEYS: ['models', 'label_encoder']
+LOCATIONS: [0, 1, 2, 3, 4]
+MODEL_TYPE: XGBRegressor
+FEATURES: ['hour', 'weekday', 'rssi', 'value', 'prev_density', 'prev2_density', 'rolling_mean_6', 'prev_day_density', 'is_weekend']
+LE_CLASSES: ['Canteen', 'D Block', 'Library', 'New Block', 'PG Block']

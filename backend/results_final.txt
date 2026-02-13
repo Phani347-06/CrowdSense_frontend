@@ -1,0 +1,39 @@
+TEST 1: Density by HOUR (Canteen weekday)
+Expected: low morning, peak lunch, low evening
+  07:00 -> 101
+  09:00 -> 102
+  11:00 -> 104
+  12:00 -> 104
+  13:00 -> 103
+  15:00 -> 99
+  17:00 -> 98
+  20:00 -> 98
+
+TEST 2: Weekend vs Weekday (Library 12PM)
+  Weekday=129, Weekend=126, Diff=3
+
+TEST 3: prev_density effect (Canteen 12PM)
+  prev=30 -> predicted=31
+  prev=60 -> predicted=65
+  prev=100 -> predicted=104
+  prev=150 -> predicted=147
+  prev=200 -> predicted=182
+
+TEST 4: All locations at lunch (12PM)
+  Canteen: 104
+  D Block: 111
+  Library: 107
+  New Block: 105
+  PG Block: 98
+
+TEST 5: Top features per location
+  Canteen: prev_day_density=0.528, rolling_mean_6=0.393, prev_density=0.046
+  D Block: prev_day_density=0.548, prev_density=0.329, prev2_density=0.082
+  Library: prev_day_density=0.549, prev_density=0.217, rolling_mean_6=0.211
+  New Block: prev_day_density=0.557, prev_density=0.374, prev2_density=0.051
+  PG Block: prev_day_density=0.563, prev_density=0.234, rolling_mean_6=0.167
+
+VERDICT:
+  Lunch(104) vs Night(98): PASS
+  High prev(124) vs Low prev(83): PASS
+  Weekday(129) vs Weekend(126): PASS

@@ -1,0 +1,5 @@
+Student Canteen: actual=172, predicted=178, diff=-6, 3% off
+Academic Block D: actual=78, predicted=79, diff=-1, 1% off
+Main Library: actual=133, predicted=139, diff=-6, 4% off
+New Block: actual=103, predicted=102, diff=+1, 0% off
+PG Block: actual=66, predicted=68, diff=-2, 2% off
